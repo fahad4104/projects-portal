@@ -2,126 +2,64 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 // GET /api/dev/seed
-// استعملها مرة واحدة فقط لعمل بيانات تجريبية
 export async function GET() {
   try {
-    const count = await prisma.project.count();
+    // 🧹 تصفير البيانات (لبيئة التطوير فقط)
+    await prisma.task.deleteMany();
+    await prisma.drawing.deleteMany();
+    await prisma.project.deleteMany();
 
-    if (count > 0) {
-      return NextResponse.json({
-        ok: true,
-        message: "قاعدة البيانات فيها مشاريع بالفعل، لم يتم التكرار.",
-        projectsCount: count,
-      });
-    }
-
-    // ===== إنشاء المشاريع =====
-    const p1 = await prisma.project.create({
+    // 🏗 إنشاء مشروع تجريبي واحد
+    const project = await prisma.project.create({
       data: {
-        code: "P-001",
-        name: "فيلا عبدالله",
-        ownerName: "عبدالله",
-        contractorName: "باوندري للمقاولات",
-        consultantName: "المكتب الاستشاري",
-        status: "IN_PROGRESS" as any, // حسب enum في schema
+        id: "P-001",
+        code: "P-001",                 // كود المشروع
+        name: "مشروع تجريبي 1",       // اسم المشروع
+        ownerName: "Owner",
+        contractorName: "Contractor",
+        consultantName: "Consultant",
+        // status يجي من الـ default في الـ schema (PLANNING مثلاً)
       },
     });
 
-    const p2 = await prisma.project.create({
-      data: {
-        code: "P-002",
-        name: "فيلا سيف",
-        ownerName: "سيف",
-        contractorName: "باوندري للمقاولات",
-        consultantName: "المكتب الاستشاري",
-        status: "PLANNING" as any,
-      },
+    // ✅ إضافة مهام تجريبية للمشروع
+    await prisma.task.createMany({
+      data: [
+        {
+          id: "T-001",
+          title: "مهمة إعداد الموقع",
+          projectId: project.id,
+          ownerRole: "OWNER",          // Enum Role
+          targetRole: "CONTRACTOR",    // Enum Role
+          status: "PENDING",           // Enum TaskStatus
+          // visibleToRoles مخزّن كـ JSON string في الـ DB
+          visibleToRoles: JSON.stringify([
+            "OWNER",
+            "CONTRACTOR",
+            "CONSULTANT",
+          ]),
+        },
+        {
+          id: "T-002",
+          title: "مهمة تجهيز المخططات",
+          projectId: project.id,
+          ownerRole: "OWNER",
+          targetRole: "CONSULTANT",
+          status: "PENDING",
+          visibleToRoles: JSON.stringify([
+            "OWNER",
+            "CONTRACTOR",
+            "CONSULTANT",
+          ]),
+        },
+      ],
     });
 
-    const p3 = await prisma.project.create({
-      data: {
-        code: "P-003",
-        name: "فيلا عيسى (قريباً)",
-        ownerName: "عيسى",
-        contractorName: "باوندري للمقاولات",
-        consultantName: "المكتب الاستشاري",
-        status: "PLANNING" as any,
-      },
-    });
-
-    // ===== مهام تجريبية لكل مشروع =====
-    const makeTasks = async (projectId: string) => {
-      await prisma.task.createMany({
-        data: [
-          {
-            projectId,
-            title: "تنفيذ القواعد",
-            status: "PENDING" as any,
-            ownerRole: "CONTRACTOR" as any,
-            targetRole: "CONTRACTOR" as any,
-            visibleToRoles: "OWNER,CONTRACTOR,CONSULTANT",
-          },
-          {
-            projectId,
-            title: "اعتماد المخططات الإنشائية",
-            status: "IN_PROGRESS" as any,
-            ownerRole: "OWNER" as any,
-            targetRole: "CONSULTANT" as any,
-            visibleToRoles: "OWNER,CONSULTANT",
-          },
-          {
-            projectId,
-            title: "توريد الخرسانة",
-            status: "PENDING" as any,
-            ownerRole: "CONTRACTOR" as any,
-            targetRole: "CONTRACTOR" as any,
-            visibleToRoles: "OWNER,CONTRACTOR",
-          },
-        ],
-      });
-    };
-
-    await makeTasks(p1.id);
-    await makeTasks(p2.id);
-    await makeTasks(p3.id);
-
-    // ===== مربعات مخططات (فارغة بدون ملفات) =====
-    const makeDrawings = async (projectId: string) => {
-      await prisma.drawing.createMany({
-        data: [
-          {
-            projectId,
-            boxName: "المخططات المعمارية",
-            fileName: "",
-            uploadedBy: "",
-            uploadedAt: null,
-            isArchived: false,
-          },
-          {
-            projectId,
-            boxName: "المخططات الإنشائية",
-            fileName: "",
-            uploadedBy: "",
-            uploadedAt: null,
-            isArchived: false,
-          },
-        ],
-      });
-    };
-
-    await makeDrawings(p1.id);
-    await makeDrawings(p2.id);
-    await makeDrawings(p3.id);
-
-    return NextResponse.json({
-      ok: true,
-      message: "تم إنشاء بيانات تجريبية بنجاح.",
-      projects: [p1.code, p2.code, p3.code],
-    });
+    return NextResponse.json({ ok: true, project });
   } catch (error) {
-    console.error("[DEV SEED ERROR]", error);
+    console.error("[DEV SEED] error:", error);
     return NextResponse.json(
-      { ok: false, error: "حدث خطأ أثناء إنشاء البيانات التجريبية." },
+      { error: "seed failed" },
       { status: 500 }
     );
   }
