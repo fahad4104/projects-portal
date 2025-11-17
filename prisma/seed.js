@@ -3,7 +3,7 @@ const { PrismaClient, ProjectStatus, Role, TaskStatus } = require("@prisma/clien
 const prisma = new PrismaClient();
 
 async function main() {
-  // نحذف القديم لو فيه شيء
+  console.log("Seeding database...");
   await prisma.task.deleteMany();
   await prisma.project.deleteMany();
 
