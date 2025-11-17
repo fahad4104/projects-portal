@@ -5,7 +5,6 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Seeding database...");
 
-  // نشتغل بمبدأ upsert عشان لو انزرع قبل ما يعطي خطأ
   const projectsData = [
     {
       code: "P-001",
@@ -13,7 +12,7 @@ async function main() {
       ownerName: "عبدالله",
       contractorName: "باوندري للمقاولات",
       consultantName: "المكتب الاستشاري",
-      status: "IN_PROGRESS", // حسب enum ProjectStatus في schema.prisma
+      status: "IN_PROGRESS",
     },
     {
       code: "P-002",
@@ -47,14 +46,13 @@ async function main() {
       },
     });
 
-    // مهام تجريبية لكل مشروع
     await prisma.task.createMany({
       data: [
         {
           projectId: project.id,
           title: "تنفيذ القواعد",
-          status: "PENDING", // enum TaskStatus: PENDING | IN_PROGRESS | DONE
-          ownerRole: "CONTRACTOR", // OWNER | CONTRACTOR | CONSULTANT
+          status: "PENDING",
+          ownerRole: "CONTRACTOR",
           targetRole: "CONTRACTOR",
           visibleToRoles: "OWNER,CONTRACTOR,CONSULTANT",
         },
@@ -77,7 +75,6 @@ async function main() {
       ],
     });
 
-    // مربعات مخططات تجريبية (فارغة بدون ملفات فعلياً)
     await prisma.drawing.createMany({
       data: [
         {
