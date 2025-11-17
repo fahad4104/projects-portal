@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // حالياً مافيه إعدادات خاصة
-  // لو احتجنا نضيف إعدادات (مثل إعدادات الصور أو i18n) بنضيفها هنا لاحقاً
+  // تقدر تضيف إعدادات زيادة هنا لو احتجنا لاحقًا
+  reactStrictMode: true,
 };
 
 export default nextConfig;
