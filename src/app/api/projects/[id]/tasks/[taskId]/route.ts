@@ -3,38 +3,49 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-// نحول من قيمة الـ status اللي تجي من الواجهة إلى قيمة Prisma
-function mapStatusToPrisma(status: string): "PENDING" | "IN_PROGRESS" | "DONE" {
+type TaskStatusDb = "PENDING" | "IN_PROGRESS" | "DONE";
+type TaskStatusClient = "pending" | "in_progress" | "done";
+
+// ===== Helpers =====
+
+// نفس فكرة getParams اللي استخدمناها في ملفات ثانية
+async function getParams(context: any) {
+  if ("params" in context) {
+    const p = (context as any).params;
+    if (p && typeof (p as any).then === "function") {
+      // params عبارة عن Promise في Next 16
+      return await p;
+    }
+    return p;
+  }
+  return {};
+}
+
+function mapStatusToPrisma(status: string): TaskStatusDb {
   if (status === "done") return "DONE";
   if (status === "in_progress") return "IN_PROGRESS";
   return "PENDING";
 }
 
-// العكس: من Prisma إلى شكل الواجهة
-function mapStatusToClient(
-  status: "PENDING" | "IN_PROGRESS" | "DONE"
-): "pending" | "in_progress" | "done" {
+function mapStatusToClient(status: TaskStatusDb): TaskStatusClient {
   if (status === "DONE") return "done";
   if (status === "IN_PROGRESS") return "in_progress";
   return "pending";
 }
 
-// نحول role من DB إلى اسم عربي
 function roleToLabel(role: string): string {
   switch (role) {
     case "OWNER":
       return "المالك";
-    case "CONTRACTOR":
-      return "المقاول";
     case "CONSULTANT":
       return "الاستشاري";
+    case "CONTRACTOR":
     default:
-      return role;
+      return "المقاول";
   }
 }
 
-// نخلي visibleToRoles المخزّنة كنص "OWNER,CONTRACTOR" إلى مصفوفة أسماء عربية
-function visibleToToLabels(value: string): string[] {
+function visibleDbToLabels(value: string): string[] {
   if (!value) return [];
   return value
     .split(",")
@@ -43,44 +54,69 @@ function visibleToToLabels(value: string): string[] {
     .map(roleToLabel);
 }
 
-// PATCH: لتحديث حالة المهمة (وتسجيل تاريخ الاكتمال لو صارت DONE)
+function mapTaskToClient(task: any) {
+  return {
+    id: task.id,
+    title: task.title,
+    status: mapStatusToClient(task.status),
+    owner: roleToLabel(task.ownerRole),
+    target: roleToLabel(task.targetRole),
+    visibleTo: visibleDbToLabels(task.visibleToRoles),
+    createdAt: task.createdAt.toISOString(),
+    completedAt: task.completedAt ? task.completedAt.toISOString() : null,
+  };
+}
+
+// ===== PATCH: تحديث حالة المهمة =====
+
 export async function PATCH(req: Request, context: any) {
   try {
-    const { id, taskId } = context.params; // id هنا كود المشروع، taskId هو رقم المهمة
+    const { id, taskId } = await getParams(context);
+    const code = id as string;
+    const taskIdStr = taskId as string;
+
+    if (!taskIdStr) {
+      return NextResponse.json(
+        { error: "معرّف المهمة غير موجود" },
+        { status: 400 }
+      );
+    }
 
     const body = await req.json();
     const statusFromClient = (body.status as string) || "pending";
-
     const prismaStatus = mapStatusToPrisma(statusFromClient);
 
-    // نحدث المهمة نفسها
+    // تأكد أن المشروع موجود (اختياري لكن مفيد)
+    const project = await prisma.project.findUnique({
+      where: { code },
+    });
+
+    if (!project) {
+      return NextResponse.json(
+        { error: "المشروع غير موجود" },
+        { status: 404 }
+      );
+    }
+
+    // نحدّث المهمة
     const updated = await prisma.task.update({
-      where: { id: taskId },
+      where: { id: taskIdStr },
       data: {
         status: prismaStatus,
         completedAt: prismaStatus === "DONE" ? new Date() : null,
       },
     });
 
-    // نجهز شكل المهمة اللي يرجع للواجهة بنفس الفورمات اللي تستعمله الصفحة
-    const taskForClient = {
-      id: updated.id,
-      title: updated.title,
-      status: mapStatusToClient(updated.status),
-      owner: roleToLabel(updated.ownerRole),
-      target: roleToLabel(updated.targetRole),
-      visibleTo: visibleToToLabels(updated.visibleToRoles),
-      createdAt: updated.createdAt.toISOString(),
-      completedAt: updated.completedAt
-        ? updated.completedAt.toISOString()
-        : null,
-    };
+    const taskForClient = mapTaskToClient(updated);
 
     return NextResponse.json({ task: taskForClient });
   } catch (error) {
-    console.error("[PATCH /api/projects/[id]/tasks/[taskId]] error:", error);
+    console.error(
+      "[PATCH /api/projects/[id]/tasks/[taskId]] error:",
+      error
+    );
     return NextResponse.json(
-      { error: "فشل تحديث حالة المهمة" },
+      { error: "حدث خطأ أثناء تحديث المهمة" },
       { status: 500 }
     );
   }
