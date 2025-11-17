@@ -33,6 +33,7 @@ async function main() {
   ];
 
   for (const p of projectsData) {
+    // مشروع واحد لكل كود – لو موجود ما يعيد إنشائه
     const project = await prisma.project.upsert({
       where: { code: p.code },
       update: {},
@@ -46,6 +47,7 @@ async function main() {
       },
     });
 
+    // مهام تجريبية
     await prisma.task.createMany({
       data: [
         {
@@ -73,8 +75,10 @@ async function main() {
           visibleToRoles: "OWNER,CONTRACTOR",
         },
       ],
+      skipDuplicates: true,
     });
 
+    // مربعات المخططات
     await prisma.drawing.createMany({
       data: [
         {
@@ -94,6 +98,7 @@ async function main() {
           isArchived: false,
         },
       ],
+      skipDuplicates: true,
     });
   }
 
