@@ -29,16 +29,15 @@ export async function PATCH(
       data: { boxName: boxName.trim() },
     });
 
-    return NextResponse.json({
-      drawing: {
-        id: updated.id,
-        boxName: updated.boxName,
-        fileName: updated.fileName,
-        uploadedBy: updated.uploadedBy,
-        uploadedAt: updated.uploadedAt.toISOString(),
-        isArchived: updated.isArchived,
-      },
-    });
+  return NextResponse.json({
+  updated: {
+    fileName: updated.fileName,
+    uploadedBy: updated.uploadedBy,
+    uploadedAt: updated.uploadedAt ? updated.uploadedAt.toISOString() : null,
+    isArchived: updated.isArchived,
+  },
+});
+
   } catch (error) {
     console.error(
       "[PATCH /api/projects/[id]/drawings/[drawingId]] error:",
