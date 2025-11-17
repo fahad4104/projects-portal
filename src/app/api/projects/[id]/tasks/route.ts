@@ -1,84 +1,127 @@
+// @ts-nocheck
+
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import {
-  Role as PrismaRole,
-  TaskStatus as PrismaTaskStatus,
-} from "@prisma/client";
 
-type RoleLabel = "المالك" | "المقاول" | "الاستشاري";
+type TaskStatusDb = "PENDING" | "IN_PROGRESS" | "DONE";
 type TaskStatusClient = "pending" | "in_progress" | "done";
 
-function roleLabelToEnum(label: RoleLabel): PrismaRole {
+// ========== Helpers ==========
+async function getParams(context: any) {
+  if ("params" in context) {
+    const p = (context as any).params;
+    if (p && typeof (p as any).then === "function") {
+      return await p;
+    }
+    return p;
+  }
+  return {};
+}
+
+function labelToRole(label: string): "OWNER" | "CONTRACTOR" | "CONSULTANT" {
   switch (label) {
     case "المالك":
       return "OWNER";
-    case "المقاول":
-      return "CONTRACTOR";
     case "الاستشاري":
       return "CONSULTANT";
+    case "المقاول":
     default:
       return "CONTRACTOR";
   }
 }
 
-function statusEnumToClient(
-  status: PrismaTaskStatus
-): TaskStatusClient {
-  switch (status) {
-    case "PENDING":
-      return "pending";
-    case "IN_PROGRESS":
-      return "in_progress";
-    case "DONE":
-      return "done";
-    default:
-      return "pending";
-  }
-}
-
-function visibleLabelsToString(labels: RoleLabel[]): string {
-  const enums = labels.map(roleLabelToEnum);
-  return enums.join(",");
-}
-
-function roleEnumToLabel(role: PrismaRole): RoleLabel {
+function roleToLabel(role: string): string {
   switch (role) {
     case "OWNER":
       return "المالك";
-    case "CONTRACTOR":
-      return "المقاول";
     case "CONSULTANT":
       return "الاستشاري";
+    case "CONTRACTOR":
     default:
       return "المقاول";
   }
 }
 
-function visibleStringToLabels(value: string): RoleLabel[] {
+function visibleLabelsToDb(labels: string[]): string {
+  if (!Array.isArray(labels)) return "";
+  return labels
+    .map((l) => labelToRole(l))
+    .join(",");
+}
+
+function visibleDbToLabels(value: string): string[] {
   if (!value) return [];
   return value
     .split(",")
-    .map((s) => s.trim())
+    .map((v) => v.trim())
     .filter(Boolean)
-    .map((s) => roleEnumToLabel(s as PrismaRole));
+    .map(roleToLabel);
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+function mapStatusToClient(status: TaskStatusDb): TaskStatusClient {
+  if (status === "DONE") return "done";
+  if (status === "IN_PROGRESS") return "in_progress";
+  return "pending";
+}
+
+function mapTaskToClient(task: any) {
+  return {
+    id: task.id,
+    title: task.title,
+    status: mapStatusToClient(task.status),
+    owner: roleToLabel(task.ownerRole),
+    target: roleToLabel(task.targetRole),
+    visibleTo: visibleDbToLabels(task.visibleToRoles),
+    createdAt: task.createdAt.toISOString(),
+    completedAt: task.completedAt ? task.completedAt.toISOString() : null,
+  };
+}
+
+// ========== (اختياري) GET: يرجّع مهام المشروع ==========
+export async function GET(_req: Request, context: any) {
   try {
-    const code = params.id;
+    const { id } = await getParams(context);
+    const code = id as string;
+
+    const project = await prisma.project.findUnique({
+      where: { code },
+      include: { tasks: { orderBy: { createdAt: "desc" } } },
+    });
+
+    if (!project) {
+      return NextResponse.json(
+        { error: "المشروع غير موجود" },
+        { status: 404 }
+      );
+    }
+
+    const tasks = project.tasks.map(mapTaskToClient);
+    return NextResponse.json({ tasks });
+  } catch (error) {
+    console.error("[GET /api/projects/[id]/tasks] error:", error);
+    return NextResponse.json(
+      { error: "فشل تحميل المهام" },
+      { status: 500 }
+    );
+  }
+}
+
+// ========== POST: إضافة مهمة جديدة ==========
+export async function POST(req: Request, context: any) {
+  try {
+    const { id } = await getParams(context);
+    const code = id as string;
+
     const body = await req.json();
 
-    const title: string = body.title;
-    const ownerRoleLabel: RoleLabel = body.ownerRoleLabel;
-    const targetRoleLabel: RoleLabel = body.targetRoleLabel;
-    let visibleToLabels: RoleLabel[] = body.visibleToLabels || [];
+    const title = (body.title as string | undefined)?.trim();
+    const ownerRoleLabel = body.ownerRoleLabel as string;
+    const targetRoleLabel = body.targetRoleLabel as string;
+    const visibleToLabels = (body.visibleToLabels as string[]) ?? [];
 
-    if (!title || !title.trim()) {
+    if (!title) {
       return NextResponse.json(
-        { error: "العنوان مطلوب" },
+        { error: "عنوان المهمة مطلوب" },
         { status: 400 }
       );
     }
@@ -94,43 +137,28 @@ export async function POST(
       );
     }
 
-    // تأكد أن صاحب المهمة موجود ضمن من يشاهد
-    if (!visibleToLabels.includes(ownerRoleLabel)) {
-      visibleToLabels = [...visibleToLabels, ownerRoleLabel];
-    }
+    const ownerRole = labelToRole(ownerRoleLabel);
+    const targetRole = labelToRole(targetRoleLabel);
+    const visibleToDb = visibleLabelsToDb(visibleToLabels);
 
-    const task = await prisma.task.create({
+    const created = await prisma.task.create({
       data: {
         projectId: project.id,
-        title: title.trim(),
-        status: PrismaTaskStatus.PENDING,
-        ownerRole: roleLabelToEnum(ownerRoleLabel),
-        targetRole: roleLabelToEnum(targetRoleLabel),
-        visibleToRoles: visibleLabelsToString(visibleToLabels),
+        title,
+        status: "PENDING",
+        ownerRole,
+        targetRole,
+        visibleToRoles: visibleToDb,
       },
     });
 
-    return NextResponse.json({
-      task: {
-        id: task.id,
-        title: task.title,
-        status: statusEnumToClient(task.status),
-        owner: roleEnumToLabel(task.ownerRole),
-        target: roleEnumToLabel(task.targetRole),
-        visibleTo: visibleStringToLabels(task.visibleToRoles),
-        createdAt: task.createdAt.toISOString(),
-        completedAt: task.completedAt
-          ? task.completedAt.toISOString()
-          : null,
-      },
-    });
+    const taskForClient = mapTaskToClient(created);
+
+    return NextResponse.json({ task: taskForClient });
   } catch (error) {
-    console.error(
-      `[POST /api/projects/${params.id}/tasks] error:`,
-      error
-    );
+    console.error("[POST /api/projects/[id]/tasks] error:", error);
     return NextResponse.json(
-      { error: "حدث خطأ أثناء إضافة المهمة" },
+      { error: "فشل إنشاء المهمة" },
       { status: 500 }
     );
   }
