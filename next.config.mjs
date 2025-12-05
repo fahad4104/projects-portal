@@ -1,7 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // تقدر تضيف إعدادات زيادة هنا لو احتجنا لاحقًا
-  reactStrictMode: true,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        // أي دومين للـ Blob من Vercel مثل:
+        //  xxxx.public.blob.vercel-storage.com
+        hostname: "*.public.blob.vercel-storage.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;
