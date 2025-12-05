@@ -1,97 +1,63 @@
 import { NextRequest, NextResponse } from "next/server";
+import { put } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 
-type ContextType =
-  | { params: { id: string; drawingId: string } }
-  | { params: Promise<{ id: string; drawingId: string }> };
+export const runtime = "nodejs";
 
-async function getParams(context: ContextType) {
-  const rawParams =
-    "then" in (context as any).params
-      ? await (context as any).params
-      : (context as any).params;
+type RouteParams = {
+  params: { id: string; drawingId: string };
+};
 
-  return rawParams as { id: string; drawingId: string };
-}
-
-// =======================
-// PATCH → تعديل اسم المربع
-// =======================
-export async function PATCH(req: Request, context: ContextType) {
+export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const { drawingId } = await getParams(context);
-    const body = await req.json();
-    const boxName: string = body.boxName;
+    const { id: projectId, drawingId } = params;
 
-    if (!boxName?.trim()) {
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
+
+    if (!file) {
       return NextResponse.json(
-        { error: "اسم المربع مطلوب" },
+        { error: "لم يتم استلام أي ملف" },
         { status: 400 }
       );
     }
 
-    const updated = await prisma.drawing.update({
-      where: { id: drawingId },
-      data: { boxName: boxName.trim() },
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!token) {
+      console.error("BLOB_READ_WRITE_TOKEN is missing");
+      return NextResponse.json(
+        { error: "إعداد التخزين غير صحيح (token مفقود)" },
+        { status: 500 }
+      );
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const blobPath = `projects/${projectId}/drawings/${drawingId}-${Date.now()}-${file.name}`;
+
+    const { url } = await put(blobPath, buffer, {
+      access: "public",
+      token,
+      contentType: file.type || "application/octet-stream",
     });
 
-    return NextResponse.json({
-      updated: {
-        id: updated.id,
-        boxName: updated.boxName,
-        fileName: updated.fileName,
-        filePath: updated.filePath,
-        uploadedBy: updated.uploadedBy,
-        uploadedAt: updated.uploadedAt
-          ? updated.uploadedAt.toISOString()
-          : null,
-        isArchived: updated.isArchived,
+    // نفترض إن عندك موديل اسمه Drawing فيه هذي الحقول:
+    // id, projectId, boxName, fileName, filePath, uploadedAt, uploadedBy?
+    const drawing = await prisma.drawing.update({
+      where: { id: drawingId },
+      data: {
+        fileName: file.name,
+        filePath: url,
+        uploadedAt: new Date(),
       },
     });
+
+    return NextResponse.json(drawing, { status: 200 });
   } catch (error) {
-    console.error(
-      "[PATCH /api/projects/[id]/drawings/[drawingId]] error:",
-      error
-    );
+    console.error("Drawing upload error:", error);
     return NextResponse.json(
-      { error: "حدث خطأ أثناء تعديل اسم المربع" },
-      { status: 500 }
-    );
-  }
-}
-
-// =======================
-// DELETE → نقل المخطط للأرشيف
-// =======================
-export async function DELETE(req: NextRequest, context: ContextType) {
-  try {
-    const { drawingId } = await getParams(context);
-
-    const updated = await prisma.drawing.update({
-      where: { id: drawingId },
-      data: { isArchived: true },
-    });
-
-    return NextResponse.json({
-      archived: {
-        id: updated.id,
-        boxName: updated.boxName,
-        fileName: updated.fileName,
-        filePath: updated.filePath,
-        uploadedBy: updated.uploadedBy,
-        uploadedAt: updated.uploadedAt
-          ? updated.uploadedAt.toISOString()
-          : null,
-        isArchived: updated.isArchived,
-      },
-    });
-  } catch (error) {
-    console.error(
-      "[DELETE /api/projects/[id]/drawings/[drawingId]] error:",
-      error
-    );
-    return NextResponse.json(
-      { error: "حدث خطأ أثناء نقل المخطط للأرشيف" },
+      { error: "فشل في حفظ المخطط" },
       { status: 500 }
     );
   }
