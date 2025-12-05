@@ -9,31 +9,25 @@ export async function POST(req: NextRequest) {
 
     if (!name || !email || !password) {
       return NextResponse.json(
-        { error: "جميع الحقول مطلوبة" },
+        { error: "الاسم والبريد وكلمة المرور مطلوبة" },
         { status: 400 }
       );
     }
 
-    // نستخدم prisma كـ any لتجاوز مشكلة TypeScript المؤقتة
-    const prismaAny = prisma as any;
-
-    // هل الإيميل موجود مسبقاً؟
-    const existing = await prismaAny.user.findUnique({
+    const existing = await prisma.user.findUnique({
       where: { email },
     });
 
     if (existing) {
       return NextResponse.json(
-        { error: "هذا الإيميل مسجّل مسبقاً" },
+        { error: "هذا البريد مسجل مسبقًا" },
         { status: 409 }
       );
     }
 
-    // تشفير الباسورد
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // إنشاء المستخدم
-    const user = await prismaAny.user.create({
+    const user = await prisma.user.create({
       data: {
         name,
         email,
@@ -43,7 +37,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
-        message: "تم التسجيل بنجاح",
         user: {
           id: user.id,
           name: user.name,

@@ -7,10 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
-//
 // ========== ENUMS ==========
-//
 
 enum ProjectStatus {
   PLANNING
@@ -20,9 +17,9 @@ enum ProjectStatus {
 }
 
 enum Role {
-  OWNER        // المالك
-  CONTRACTOR   // المقاول
-  CONSULTANT   // الاستشاري
+  OWNER
+  CONTRACTOR
+  CONSULTANT
 }
 
 enum TaskStatus {
@@ -30,6 +27,7 @@ enum TaskStatus {
   IN_PROGRESS
   DONE
 }
+
 
 //
 // ========== MODELS ==========
@@ -155,7 +153,7 @@ model ProjectPhoto {
 
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId  String
-
+ uploadedBy String?
   fileName   String
   filePath   String
   uploadedAt DateTime @default(now())
