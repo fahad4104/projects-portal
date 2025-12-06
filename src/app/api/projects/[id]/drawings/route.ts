@@ -1,123 +1,100 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import path from "path";
-import { promises as fs } from "fs";
-
-export const runtime = "nodejs";
+import { put } from "@vercel/blob";
 
 type RouteParams = {
   params: { id: string };
 };
 
-// ✅ Helper لتحويل سجل الـ DB إلى شكل يناسب الواجهة
-function mapDrawing(d: any) {
-  return {
-    id: d.id,
-    boxName: d.boxName,
-    fileName: d.fileName ?? null,
-    filePath: d.filePath ?? null,
-    uploadedBy: d.uploadedBy ?? null,
-    uploadedAt: d.uploadedAt ? d.uploadedAt.toISOString() : null,
-  };
-}
-
-// =======================
 // GET /api/projects/[id]/drawings
-// يرجع:
-// { active: [...], archive: [...] }
-// =======================
-export async function GET(req: NextRequest, { params }: RouteParams) {
+// يرجّع المخططات النشطة + المؤرشفة
+export async function GET(_req: NextRequest, { params }: RouteParams) {
   const projectId = params.id;
 
   try {
     const drawings = await prisma.drawing.findMany({
       where: { projectId },
-      orderBy: { uploadedAt: "desc" },
+      orderBy: { boxName: "asc" },
     });
 
-    const active = drawings
-      .filter((d) => !d.isArchived)
-      .map((d) => mapDrawing(d));
+    const active = drawings.filter((d) => !d.isArchived);
+    const archive = drawings.filter((d) => d.isArchived);
 
-    const archive = drawings
-      .filter((d) => d.isArchived)
-      .map((d) => mapDrawing(d));
-
-    return NextResponse.json({ active, archive });
+    return NextResponse.json({ active, archive }, { status: 200 });
   } catch (error) {
-    console.error("GET /api/projects/[id]/drawings error", error);
+    console.error("Error fetching drawings:", error);
     return NextResponse.json(
-      { message: "فشل في تحميل المخططات" },
+      { message: "خطأ في تحميل المخططات" },
       { status: 500 }
     );
   }
 }
 
-// =======================
 // POST /api/projects/[id]/drawings
-//
-// يستخدم FormData
-// - إنشاء مربع جديد بدون ملف
-// - أو رفع ملف (لمربع جديد أو قديم)
-// =======================
+// يستخدم في:
+// 1) إنشاء مربع جديد بدون ملف (boxName + uploadedBy فقط)
+// 2) رفع ملف جديد (مع drawingId اختياريًا لاستبدال ملف سابق)
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const projectId = params.id;
 
   try {
     const formData = await req.formData();
 
-    const boxNameRaw = formData.get("boxName");
-    const uploadedByRaw = formData.get("uploadedBy");
-    const drawingIdRaw = formData.get("drawingId");
-    const file = formData.get("file") as File | null;
-
-    const boxName =
-      typeof boxNameRaw === "string" ? boxNameRaw.trim() : "";
-    const uploadedBy =
-      typeof uploadedByRaw === "string" ? uploadedByRaw.trim() : null;
-    const drawingId =
-      typeof drawingIdRaw === "string" && drawingIdRaw.length > 0
-        ? drawingIdRaw
-        : null;
+    const boxName = (formData.get("boxName") as string | null)?.trim();
+    const uploadedBy = (formData.get("uploadedBy") as string | null)?.trim();
+    const drawingId = formData.get("drawingId") as string | null; // اختياري
+    const file = formData.get("file") as File | null; // اختياري
 
     if (!boxName) {
       return NextResponse.json(
-        { message: "اسم المربع (المخطط) مطلوب" },
+        { message: "اسم المربع (boxName) مطلوب" },
         { status: 400 }
       );
     }
 
-    // مسار تخزين الملفات في /public/uploads
-    let storedFileName: string | null = null;
-    let storedFilePath: string | null = null;
+    // لو ما في ملف ولا drawingId -> مجرد إنشاء مربع جديد بدون ملف
+    if (!file && !drawingId) {
+      const created = await prisma.drawing.create({
+        data: {
+          projectId,
+          boxName,
+          uploadedBy: uploadedBy || null,
+          uploadedAt: null,
+          isArchived: false,
+        },
+      });
 
-    if (file) {
-      const uploadDir = path.join(process.cwd(), "public", "uploads");
-      await fs.mkdir(uploadDir, { recursive: true });
-
-      const bytes = await file.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-
-      const safeOriginalName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-      const filename = `${Date.now()}-${safeOriginalName}`;
-      const filepath = path.join(uploadDir, filename);
-
-      await fs.writeFile(filepath, buffer);
-
-      storedFileName = file.name;
-      storedFilePath = `/uploads/${filename}`;
+      return NextResponse.json({ drawing: created }, { status: 201 });
     }
 
-    // لو فيه drawingId ومعاه ملف → نأرشف القديم وننشئ سجل جديد
-    if (drawingId && file) {
-      const existing = await prisma.drawing.findUnique({
-        where: { id: drawingId },
+    // لو في ملف، نرفعه باستخدام Vercel Blob
+    if (!file) {
+      return NextResponse.json(
+        { message: "لم يتم استلام أي ملف" },
+        { status: 400 }
+      );
+    }
+
+    // رفع الملف إلى Vercel Blob
+    const blob = await put(
+      `projects/${projectId}/drawings/${Date.now()}-${file.name}`,
+      file,
+      { access: "public" }
+    );
+
+    const fileName = file.name;
+    const filePath = blob.url;
+
+    // لو تم إرسال drawingId -> نؤرشف القديم (إن وجد) ثم ننشئ سجل جديد بنفس اسم المربع
+    if (drawingId) {
+      const existing = await prisma.drawing.findFirst({
+        where: { id: drawingId, projectId },
       });
 
       if (existing) {
-        // نأرشف القديم
+        // نجعل القديم مؤرشف
         await prisma.drawing.update({
-          where: { id: drawingId },
+          where: { id: existing.id },
           data: { isArchived: true },
         });
       }
@@ -126,64 +103,33 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         data: {
           projectId,
           boxName,
-          fileName: storedFileName,
-          filePath: storedFilePath,
-          uploadedBy,
+          fileName,
+          filePath,
+          uploadedBy: uploadedBy || null,
+          uploadedAt: new Date(),
           isArchived: false,
         },
       });
 
-      return NextResponse.json(
-        { drawing: mapDrawing(created) },
-        { status: 201 }
-      );
+      return NextResponse.json({ drawing: created }, { status: 201 });
     }
 
-    // لو ما فيه ملف → فقط إنشاء مربع بدون ملف
-    if (!file && !drawingId) {
-      const created = await prisma.drawing.create({
-        data: {
-          projectId,
-          boxName,
-          fileName: null,
-          filePath: null,
-          uploadedBy,
-          isArchived: false,
-        },
-      });
+    // لا يوجد drawingId لكن يوجد ملف -> إنشاء مخطط جديد بملف جديد
+    const created = await prisma.drawing.create({
+      data: {
+        projectId,
+        boxName,
+        fileName,
+        filePath,
+        uploadedBy: uploadedBy || null,
+        uploadedAt: new Date(),
+        isArchived: false,
+      },
+    });
 
-      return NextResponse.json(
-        { drawing: mapDrawing(created) },
-        { status: 201 }
-      );
-    }
-
-    // لو فيه ملف بدون drawingId → إنشاء مخطط جديد مع ملف
-    if (file && !drawingId) {
-      const created = await prisma.drawing.create({
-        data: {
-          projectId,
-          boxName,
-          fileName: storedFileName,
-          filePath: storedFilePath,
-          uploadedBy,
-          isArchived: false,
-        },
-      });
-
-      return NextResponse.json(
-        { drawing: mapDrawing(created) },
-        { status: 201 }
-      );
-    }
-
-    // حالة غريبة (drawingId بدون ملف)
-    return NextResponse.json(
-      { message: "لا يوجد ملف مرفوع، استخدم PATCH لتعديل الاسم فقط" },
-      { status: 400 }
-    );
+    return NextResponse.json({ drawing: created }, { status: 201 });
   } catch (error) {
-    console.error("POST /api/projects/[id]/drawings error", error);
+    console.error("Error saving drawing:", error);
     return NextResponse.json(
       { message: "فشل في حفظ المخطط" },
       { status: 500 }
