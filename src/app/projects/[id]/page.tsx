@@ -589,6 +589,36 @@ const ProjectPage = () => {
 
   // ===== دعوة مستخدمين للمشروع =====
 
+  const handleRemoveMember = async (memberId: string) => {
+    const ok = window.confirm(
+      "سيتم إزالة هذا المستخدم من المشروع، هل أنت متأكد؟"
+    );
+    if (!ok) return;
+
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/members/${memberId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await res.json();
+      if (!res.ok) {
+        console.error("Error removing member", data);
+        alert(data?.message ?? "فشل في إزالة المستخدم من المشروع");
+        return;
+      }
+
+      // نحدّث بيانات المشروع بعد الإزالة
+      await fetchProjectData(projectId);
+    } catch (error) {
+      console.error("Error removing member", error);
+      alert("حدث خطأ أثناء إزالة المستخدم من المشروع");
+    }
+  };
+
+
   const handleInviteMember = async () => {
     if (!inviteEmail.trim()) {
       setInviteError("يرجى إدخال البريد الإلكتروني للمستخدم");
@@ -797,6 +827,59 @@ const ProjectPage = () => {
             يمكن لأي مستخدم تمت إضافته هنا الدخول للمشروع من حسابه واستخدام
             تبويبات المهام، المخططات، الصور وغيرها.
           </p>
+                    {/* قائمة المستخدمين في المشروع */}
+          {!loadingMembers && (
+            <div className="mt-3 border-t pt-2">
+              <h4 className="text-xs font-semibold mb-1">
+                المستخدمون الحاليون في هذا المشروع:
+              </h4>
+
+              {members.length === 0 ? (
+                <p className="text-[11px] text-gray-500">
+                  لا يوجد مستخدمون آخرون مضافون بعد.
+                </p>
+              ) : (
+                <ul className="text-[11px] text-gray-700 space-y-1">
+                  {members.map((m) => {
+  const isCurrentUser = m.email === currentUserKey;
+
+  return (
+    <li
+      key={m.id}
+      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1"
+    >
+      <div className="flex items-center gap-2">
+        <span>
+          {m.name || m.email}
+          {m.roleLabel && (
+            <span className="text-gray-500"> – {m.roleLabel}</span>
+          )}
+          {isCurrentUser && (
+            <span className="text-[10px] text-blue-500 ml-1">(أنت)</span>
+          )}
+        </span>
+
+        {/* زر إزالة يظهر فقط لغير المستخدم الحالي */}
+        {!isCurrentUser && (
+          <button
+            onClick={() => handleRemoveMember(m.id)}
+            className="text-[10px] text-red-600 hover:text-red-700"
+          >
+            إزالة
+          </button>
+        )}
+      </div>
+
+      <span className="text-[10px] text-gray-400">{m.email}</span>
+    </li>
+  );
+})}
+
+                </ul>
+              )}
+            </div>
+          )}
+
         </div>
 
         {/* التبويبات */}
