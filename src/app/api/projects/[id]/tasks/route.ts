@@ -6,16 +6,15 @@ type RouteParams = {
   params: { id: string };
 };
 
-type RoleLabel = "المالك" | "المقاول" | "الاستشاري";
 type TaskStatusClient = "pending" | "in_progress" | "done";
 
 type ClientTask = {
   id: string;
   title: string;
   status: TaskStatusClient;
-  owner: RoleLabel;
-  assignedTo: RoleLabel[];
-  visibleTo: RoleLabel[];
+  owner: string;        // نخزن هنا الإيميل أو أي معرف
+  assignedTo: string[]; // قائمة الإيميلات الموجهة لهم المهمة
+  visibleTo: string[];  // الإيميلات اللي يشوفون المهمة
   createdAt: string;
   completedAt?: string | null;
 };
@@ -46,14 +45,13 @@ function mapStatusFromClient(status: TaskStatusClient): TaskStatus {
   }
 }
 
-function parseRoles(value: string | null): RoleLabel[] {
+// نحول String JSON إلى مصفوفة سلاسل
+function parseStringArray(value: string | null): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
     if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (r) => r === "المالك" || r === "المقاول" || r === "الاستشاري"
-      ) as RoleLabel[];
+      return parsed.filter((x) => typeof x === "string") as string[];
     }
     return [];
   } catch {
@@ -61,22 +59,16 @@ function parseRoles(value: string | null): RoleLabel[] {
   }
 }
 
+// نحول سجل DB إلى الشكل اللي تستخدمه الواجهة
 function mapTaskToClient(task: any): ClientTask {
-  const assigned = parseRoles(task.assignedToRoles);
-  const visible = parseRoles(task.visibleToRoles);
-
-  const owner: RoleLabel =
-    task.ownerRoleLabel === "المالك" ||
-    task.ownerRoleLabel === "المقاول" ||
-    task.ownerRoleLabel === "الاستشاري"
-      ? task.ownerRoleLabel
-      : "المقاول";
+  const assigned = parseStringArray(task.assignedToRoles);
+  const visible = parseStringArray(task.visibleToRoles);
 
   return {
     id: task.id,
     title: task.title,
     status: mapStatusToClient(task.status),
-    owner,
+    owner: task.ownerRoleLabel ?? "",
     assignedTo: assigned,
     visibleTo: visible,
     createdAt: task.createdAt.toISOString(),
@@ -86,7 +78,7 @@ function mapTaskToClient(task: any): ClientTask {
 
 // ===== GET: جلب المهام =====
 
-export async function GET(req: NextRequest, { params }: RouteParams) {
+export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
     const projectId = params.id;
 
@@ -121,9 +113,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       visibleToLabels,
     }: {
       title: string;
-      ownerRoleLabel?: RoleLabel;
-      assignedToLabels?: RoleLabel[];
-      visibleToLabels?: RoleLabel[];
+      ownerRoleLabel?: string;    // هنا نتوقع الإيميل
+      assignedToLabels?: string[]; // إيميلات
+      visibleToLabels?: string[];  // إيميلات
     } = body;
 
     if (!title || typeof title !== "string") {
@@ -133,22 +125,21 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const owner: RoleLabel =
-      ownerRoleLabel === "المالك" ||
-      ownerRoleLabel === "المقاول" ||
-      ownerRoleLabel === "الاستشاري"
-        ? ownerRoleLabel
-        : "المقاول";
+    const owner =
+      typeof ownerRoleLabel === "string" && ownerRoleLabel.trim().length > 0
+        ? ownerRoleLabel.trim()
+        : null;
 
-    const validRoles = (list: RoleLabel[] | undefined): RoleLabel[] => {
+    const ensureStringArray = (list: any): string[] => {
       if (!Array.isArray(list)) return [];
-      return list.filter(
-        (r) => r === "المالك" || r === "المقاول" || r === "الاستشاري"
-      ) as RoleLabel[];
+      return list
+        .filter((x) => typeof x === "string")
+        .map((x: string) => x.trim())
+        .filter((x) => x.length > 0);
     };
 
-    const assigned = validRoles(assignedToLabels);
-    const visible = validRoles(visibleToLabels);
+    const assigned = ensureStringArray(assignedToLabels);
+    const visible = ensureStringArray(visibleToLabels);
 
     const task = await prisma.task.create({
       data: {
