@@ -1,63 +1,77 @@
+// src/app/api/projects/[id]/drawings/[drawingId]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { put } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 
-export const runtime = "nodejs";
-
 type RouteParams = {
-  params: { id: string; drawingId: string };
+  params: {
+    id: string;        // project id
+    drawingId: string; // drawing id
+  };
 };
 
-export async function POST(req: NextRequest, { params }: RouteParams) {
+// (اختياري) جلب مخطط واحد - لو ما تحتاجه عادي يظل موجود
+export async function GET(_req: NextRequest, { params }: RouteParams) {
+  const { id: projectId, drawingId } = params;
+
   try {
-    const { id: projectId, drawingId } = params;
-
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-
-    if (!file) {
-      return NextResponse.json(
-        { error: "لم يتم استلام أي ملف" },
-        { status: 400 }
-      );
-    }
-
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) {
-      console.error("BLOB_READ_WRITE_TOKEN is missing");
-      return NextResponse.json(
-        { error: "إعداد التخزين غير صحيح (token مفقود)" },
-        { status: 500 }
-      );
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    const blobPath = `projects/${projectId}/drawings/${drawingId}-${Date.now()}-${file.name}`;
-
-    const { url } = await put(blobPath, buffer, {
-      access: "public",
-      token,
-      contentType: file.type || "application/octet-stream",
-    });
-
-    // نفترض إن عندك موديل اسمه Drawing فيه هذي الحقول:
-    // id, projectId, boxName, fileName, filePath, uploadedAt, uploadedBy?
-    const drawing = await prisma.drawing.update({
-      where: { id: drawingId },
-      data: {
-        fileName: file.name,
-        filePath: url,
-        uploadedAt: new Date(),
+    const drawing = await prisma.drawing.findFirst({
+      where: {
+        id: drawingId,
+        projectId,
       },
     });
 
+    if (!drawing) {
+      return NextResponse.json(
+        { message: "لم يتم العثور على المخطط المطلوب" },
+        { status: 404 }
+      );
+    }
+
     return NextResponse.json(drawing, { status: 200 });
   } catch (error) {
-    console.error("Drawing upload error:", error);
+    console.error("Error getting drawing:", error);
     return NextResponse.json(
-      { error: "فشل في حفظ المخطط" },
+      { message: "حدث خطأ أثناء جلب بيانات المخطط" },
+      { status: 500 }
+    );
+  }
+}
+
+// حذف مخطط
+export async function DELETE(_req: NextRequest, { params }: RouteParams) {
+  const { id: projectId, drawingId } = params;
+
+  try {
+    // نتأكد أول أنه تابع لنفس المشروع
+    const drawing = await prisma.drawing.findFirst({
+      where: {
+        id: drawingId,
+        projectId,
+      },
+    });
+
+    if (!drawing) {
+      return NextResponse.json(
+        { message: "لم يتم العثور على المخطط لهذا المشروع" },
+        { status: 404 }
+      );
+    }
+
+    await prisma.drawing.delete({
+      where: {
+        id: drawingId,
+      },
+    });
+
+    return NextResponse.json(
+      { message: "تم حذف المخطط بنجاح" },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error("Error deleting drawing:", error);
+    return NextResponse.json(
+      { message: "حدث خطأ أثناء حذف المخطط" },
       { status: 500 }
     );
   }

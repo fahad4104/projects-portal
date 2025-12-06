@@ -13,9 +13,9 @@ type Task = {
   id: string;
   title: string;
   status: TaskStatusClient;
-  owner: string;          // نخزن هنا معرف المستخدم (مثلاً الإيميل)
-  assignedTo: string[];   // قائمة معرفات المستخدمين الموجهة لهم المهمة
-  visibleTo: string[];    // قائمة معرفات المستخدمين اللي يقدرون يشوفون المهمة
+  owner: string; // نخزن هنا معرف المستخدم (مثلاً الإيميل)
+  assignedTo: string[]; // قائمة معرفات المستخدمين الموجهة لهم المهمة
+  visibleTo: string[]; // قائمة معرفات المستخدمين اللي يقدرون يشوفون المهمة
   createdAt: string;
   completedAt?: string | null;
 };
@@ -188,33 +188,23 @@ const ProjectPage = () => {
     setLoadingMembers(true);
 
     try {
-      const [
-        projRes,
-        tasksRes,
-        drawingsRes,
-        photosRes,
-        membersRes,
-      ] = await Promise.all([
-        fetch(`/api/projects/${projectId}`),
-        fetch(`/api/projects/${projectId}/tasks`),
-        fetch(`/api/projects/${projectId}/drawings`),
-        fetch(`/api/projects/${projectId}/photos`),
-        fetch(`/api/projects/${projectId}/members`),
-      ]);
+      const [projRes, tasksRes, drawingsRes, photosRes, membersRes] =
+        await Promise.all([
+          fetch(`/api/projects/${projectId}`),
+          fetch(`/api/projects/${projectId}/tasks`),
+          fetch(`/api/projects/${projectId}/drawings`),
+          fetch(`/api/projects/${projectId}/photos`),
+          fetch(`/api/projects/${projectId}/members`),
+        ]);
 
-      const [
-        projData,
-        tasksData,
-        drawingsData,
-        photosData,
-        membersData,
-      ] = await Promise.all([
-        projRes.json(),
-        tasksRes.json(),
-        drawingsRes.json(),
-        photosRes.json(),
-        membersRes.json(),
-      ]);
+      const [projData, tasksData, drawingsData, photosData, membersData] =
+        await Promise.all([
+          projRes.json(),
+          tasksRes.json(),
+          drawingsRes.json(),
+          photosRes.json(),
+          membersRes.json(),
+        ]);
 
       if (projRes.ok) {
         setProject(projData.project ?? projData ?? null);
@@ -230,6 +220,8 @@ const ProjectPage = () => {
       }
 
       if (drawingsRes.ok) {
+        // نتوقع من الـ API يرجع شكل:
+        // { active: DrawingItem[], archive: DrawingItem[] }
         const active: DrawingItem[] = drawingsData.active ?? [];
         const archive: DrawingItem[] = drawingsData.archive ?? [];
         setDrawings(active);
@@ -252,7 +244,8 @@ const ProjectPage = () => {
       }
 
       if (membersRes.ok) {
-        const list: ProjectMember[] = membersData.members ?? membersData ?? [];
+        const list: ProjectMember[] =
+          membersData.members ?? membersData ?? [];
         setMembers(Array.isArray(list) ? list : []);
       } else {
         console.error("Error loading members", membersData);
@@ -393,7 +386,7 @@ const ProjectPage = () => {
     if (existing) {
       const replace = window.confirm(
         "يوجد مربع مخطط آخر بنفس الاسم.\n\n" +
-          "هل تريد نقل القديم (بملفه إن وجد) إلى الأرشيف وإنشاء مربع جديد بنفس الاسم؟\n\n" +
+          "سيتم نقل المربع القديم للأرشيف وإنشاء مربع جديد بنفس الاسم.\n\n" +
           "اضغط (إلغاء) لتغيير الاسم."
       );
 
@@ -403,19 +396,18 @@ const ProjectPage = () => {
       }
 
       try {
+        // ✅ هنا نستدعي مسار الأرشفة وليس الحذف
         const resArchive = await fetch(
-          `/api/projects/${projectId}/drawings/${existing.id}`,
+          `/api/projects/${projectId}/drawings/${existing.id}/archive`,
           {
-            method: "DELETE",
+            method: "POST",
           }
         );
 
+        const dataArchive = await resArchive.json().catch(() => null);
+
         if (!resArchive.ok) {
-          let data: any = null;
-          try {
-            data = await resArchive.json();
-          } catch {}
-          console.error("Error archiving drawing", data);
+          console.error("Error archiving old drawing", dataArchive);
           alert("تعذر نقل المخطط القديم للأرشيف.");
           return;
         }
@@ -508,17 +500,18 @@ const ProjectPage = () => {
     if (!ok) return;
 
     try {
+      // ✅ هنا أيضًا نستخدم مسار الأرشفة الجديد
       const res = await fetch(
-        `/api/projects/${projectId}/drawings/${drawingId}`,
+        `/api/projects/${projectId}/drawings/${drawingId}/archive`,
         {
-          method: "DELETE",
+          method: "POST",
         }
       );
 
       const data = await res.json();
       if (!res.ok) {
         console.error("Error archiving drawing", data);
-        alert(data?.error ?? "فشل في نقل المخطط للأرشيف");
+        alert(data?.message ?? "فشل في نقل المخطط للأرشيف");
         return;
       }
 
@@ -651,7 +644,14 @@ const ProjectPage = () => {
     members.length > 0
       ? members
       : currentUserKey
-      ? [{ id: "self", name: currentUserLabel, email: currentUserKey, roleLabel: null }]
+      ? [
+          {
+            id: "self",
+            name: currentUserLabel,
+            email: currentUserKey,
+            roleLabel: null,
+          },
+        ]
       : [];
 
   return (
@@ -850,8 +850,7 @@ const ProjectPage = () => {
                   : "text-gray-600"
               }`}
             >
-              محادثة سريعة (شكلي)
-            </button>
+المحادثات (قريبا)            </button>
           </div>
 
           <div className="p-3 text-sm">
@@ -873,9 +872,7 @@ const ProjectPage = () => {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <div className="text-xs">
-                      <label className="block mb-1">
-                        موجهة لـ
-                      </label>
+                      <label className="block mb-1">موجهة لـ</label>
                       <div className="flex flex-col gap-1 bg-white p-2 border rounded-lg">
                         {memberOptions.map((m) => {
                           const key = m.email;
@@ -901,9 +898,7 @@ const ProjectPage = () => {
                     </div>
 
                     <div className="text-xs">
-                      <label className="block mb-1">
-                        اظهار لـ :
-                      </label>
+                      <label className="block mb-1">اظهار لـ :</label>
                       <div className="flex flex-col gap-1 bg-white p-2 border rounded-lg">
                         {memberOptions.map((m) => {
                           const key = m.email;
